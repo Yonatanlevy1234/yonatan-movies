@@ -89,37 +89,55 @@ class TelegramStreamManager:
         BATCH_SIZE = 200
 
         try:
-            async for message in self.client.get_chat_history(chat_id=self.channel_id):
-                if not message or message.empty:
-                    continue
-
-                media = message.video or message.document
-                if media:
-                    if message.document and not (media.mime_type and 'video' in media.mime_type):
+            # Fetch channel messages in batches of 200 message IDs (Bot API compatible)
+            for start_id in range(1, 1000000, 200):
+                msg_ids = list(range(start_id, start_id + 200))
+                try:
+                    messages = await self.client.get_messages(chat_id=self.channel_id, message_ids=msg_ids)
+                    if not messages:
                         continue
+                    if not isinstance(messages, list):
+                        messages = [messages]
 
-                    raw_title = message.caption
-                    if not raw_title and hasattr(media, "file_name") and media.file_name:
-                        raw_title = media.file_name
+                    empty_count = 0
+                    for message in messages:
+                        if not message or message.empty:
+                            empty_count += 1
+                            continue
 
-                    if raw_title:
-                        file_size = getattr(media, "file_size", 0)
-                        duration = getattr(media, "duration", 0)
-                        mime_type = getattr(media, "mime_type", "video/mp4") or "video/mp4"
-                        file_name = getattr(media, "file_name", f"movie_{message.id}.mp4") or f"movie_{message.id}.mp4"
+                        media = message.video or message.document
+                        if media:
+                            if message.document and not (media.mime_type and 'video' in media.mime_type):
+                                continue
 
-                        batch.append({
-                            "message_id": message.id,
-                            "raw_title": raw_title,
-                            "file_size": file_size,
-                            "duration": duration,
-                            "mime_type": mime_type,
-                            "file_name": file_name
-                        })
+                            raw_title = message.caption
+                            if not raw_title and hasattr(media, "file_name") and media.file_name:
+                                raw_title = media.file_name
 
-                        if len(batch) >= BATCH_SIZE:
-                            synced_count += db.add_or_update_movies_batch(batch)
-                            batch = []
+                            if raw_title:
+                                file_size = getattr(media, "file_size", 0)
+                                duration = getattr(media, "duration", 0)
+                                mime_type = getattr(media, "mime_type", "video/mp4") or "video/mp4"
+                                file_name = getattr(media, "file_name", f"movie_{message.id}.mp4") or f"movie_{message.id}.mp4"
+
+                                batch.append({
+                                    "message_id": message.id,
+                                    "raw_title": raw_title,
+                                    "file_size": file_size,
+                                    "duration": duration,
+                                    "mime_type": mime_type,
+                                    "file_name": file_name
+                                })
+
+                                if len(batch) >= BATCH_SIZE:
+                                    synced_count += db.add_or_update_movies_batch(batch)
+                                    batch = []
+
+                    if empty_count >= 195 and start_id > 800000:
+                        break
+
+                except Exception:
+                    pass
 
             if batch:
                 synced_count += db.add_or_update_movies_batch(batch)
